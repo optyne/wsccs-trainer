@@ -1,0 +1,13 @@
+services:
+  wsccs:
+    build: .
+    container_name: wsccs-trainer
+    restart: unless-stopped
+    ports:
+      - "80:8080"          # 選手用 http://<主機IP>/ ，後台 http://<主機IP>/admin
+    environment:
+      - ADMIN_PASSWORD=change-me
+      - TZ=Asia/Taipei
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads
