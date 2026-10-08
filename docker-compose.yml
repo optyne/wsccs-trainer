@@ -11,3 +11,16 @@ services:
     volumes:
       - ./data:/app/data
       - ./uploads:/app/uploads
+
+  # eInk API 模擬器（取代中央工廠 192.168.10.2:3001）
+  eink-sim:
+    build: .
+    container_name: eink-sim
+    restart: unless-stopped
+    command: ["node", "eink-sim/server.js"]
+    ports:
+      - "3001:3001"
+    environment:
+      - EINK_REFRESH_MS=4000
+      # - EINK_TEAMS=team_25:password
+      # - EINK_LABELS=8173E4476

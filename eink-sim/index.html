@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>eInk API 模擬器</title>
+<style>
+  :root { --bg:#f4f5f7; --card:#fff; --line:#e3e6ea; --text:#1f2933; --muted:#6b7785; --accent:#2563eb; --red:#d1202f; --ok:#16a34a; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans TC", "PingFang TC", sans-serif; background:var(--bg); color:var(--text); font-size:14px; }
+  header { background:#111; color:#fff; padding:14px 20px; display:flex; flex-wrap:wrap; gap:8px 20px; align-items:center; justify-content:space-between; }
+  header h1 { margin:0; font-size:17px; }
+  header code { background:#222; padding:3px 8px; border-radius:4px; color:#fde68a; }
+  main { padding:18px 16px 60px; max-width:1500px; margin:0 auto; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(340px, 1fr)); gap:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  .card .shot { background:#d9dde2; padding:14px; display:flex; justify-content:center; position:relative; }
+  .card .shot img { width:100%; max-width:400px; box-shadow:0 2px 10px rgba(0,0,0,.15); background:#fff; }
+  .card .shot.refreshing img { animation: flick .35s steps(2) infinite; }
+  @keyframes flick { 0% { filter: invert(0); } 100% { filter: invert(1); } }
+  .badge { position:absolute; top:8px; left:8px; background:#111; color:#fff; font-size:11px; padding:2px 8px; border-radius:999px; }
+  .badge.fault { background:var(--red); left:auto; right:8px; }
+  .meta { padding:10px 12px; display:flex; flex-wrap:wrap; gap:6px 12px; align-items:center; justify-content:space-between; }
+  .meta b { font-family: Menlo, Consolas, monospace; font-size:15px; }
+  .muted { color:var(--muted); font-size:12px; }
+  .row { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  button, select, input { font: inherit; border:1px solid var(--line); border-radius:6px; padding:6px 10px; background:#fff; }
+  button { cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button:hover { filter:brightness(.96); }
+  a { color: var(--accent); }
+  section { margin-top:26px; }
+  h2 { font-size:15px; margin:0 0 10px; }
+  table { width:100%; border-collapse:collapse; background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden; font-size:13px; }
+  th, td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { background:#fafbfc; color:var(--muted); font-weight:600; font-size:12px; }
+  td.code { font-family: Menlo, Consolas, monospace; font-size:12px; word-break:break-all; }
+  .s2 { color:var(--ok); font-weight:600; } .s4, .s5, .s0 { color:var(--red); font-weight:600; }
+  .empty { padding:30px; text-align:center; color:var(--muted); background:#fff; border:1px dashed var(--line); border-radius:10px; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px 14px; border-radius:8px; overflow:auto; font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>eInk API 模擬器 · 虛擬 E-Label</h1>
+  <div class="row"><span>Base URL</span><code id="base"></code><span class="muted" id="cfg" style="color:#cbd5e1"></span></div>
+</header>
+<main>
+  <div class="row" style="margin-bottom:14px">
+    <input id="newId" placeholder="新增標籤 ID（印在條碼上），例如 8173E4476" style="width:320px" />
+    <button class="primary" id="add">新增標籤</button>
+    <span class="muted">第一次 PUT 未知 ID 時也會自動建立（EINK_STRICT=1 時除外）。點標籤可開全螢幕給 ML 相機拍。</span>
+  </div>
+  <div id="labels" class="grid"></div>
+
+  <section>
+    <h2>API 呼叫紀錄（最新在上）</h2>
+    <table><thead><tr><th>時間</th><th>來源</th><th>隊伍</th><th>請求</th><th>狀態</th><th>回應</th></tr></thead><tbody id="log"></tbody></table>
+  </section>
+
+  <section>
+    <h2>Node-RED 呼叫範例（與大會 eInk_API.pdf 相同）</h2>
+<pre id="example"></pre>
+  </section>
+</main>
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const base = location.origin + '/api/ws26';
+$('#base').textContent = base;
+$('#example').textContent =
+`POST ${base}/login
+{ "teamId": "team_25", "password": "<team password>" }
+→ { "token": "..." }
+
+PUT ${base}/labels/<barcode>
+Authorization: Bearer <token>
+{ "title": "Order 1234-1", "subtitle": "Part 4503", "message": "Successful",
+  "messageTextColor": "white", "messageBackgroundColor": "black",
+  "qrCode": "http://172.21.0.90:1880/dashboard", "nfcUrl": "", "imageDataUrl": "" }
+→ { "success": true, "message": "Data successfully sent to the API" }
+
+POST   ${base}/labels/<barcode>/overlay   { "imageDataUrl": "data:image/png;base64,..." }
+DELETE ${base}/labels/<barcode>/overlay`;
+
+let state = { labels: [], log: [] };
+const ver = {};
+
+function card(l) {
+  ver[l.barcode] = (ver[l.barcode] || 0) + 1;
+  const div = document.createElement('div');
+  div.className = 'card';
+  div.id = 'c-' + CSS.escape(l.barcode);
+  div.innerHTML = `
+    <a class="shot ${l.refreshing ? 'refreshing' : ''}" href="/label/${encodeURIComponent(l.barcode)}" target="_blank" title="全螢幕">
+      <img alt="E-Label ${esc(l.barcode)}" src="/label/${encodeURIComponent(l.barcode)}.svg?v=${Date.now()}">
+      ${l.refreshing ? '<span class="badge">刷新中…</span>' : ''}
+      ${l.fault ? `<span class="badge fault">故障：${esc(l.fault)}</span>` : ''}
+    </a>
+    <div class="meta">
+      <div><b>${esc(l.barcode)}</b><div class="muted">寫入 ${l.writes} 次${l.lastTeam ? ' · ' + esc(l.lastTeam) : ''}${l.updatedAt ? ' · ' + new Date(l.updatedAt).toLocaleTimeString() : ''}${l.overlay ? ' · 有遮罩' : ''}</div></div>
+      <div class="row">
+        <select title="故障注入" data-act="fault">
+          ${['none','http500','timeout','norefresh'].map(m => `<option value="${m}" ${ (l.fault||'none')===m ? 'selected':''}>${{none:'正常',http500:'回 500',timeout:'不回應',norefresh:'不刷新'}[m]}</option>`).join('')}
+        </select>
+        <button data-act="reset">還原</button>
+        <button data-act="del">刪除</button>
+      </div>
+    </div>`;
+  div.querySelector('[data-act=fault]').onchange = (e) => post(`/sim/api/labels/${encodeURIComponent(l.barcode)}/fault`, { mode: e.target.value });
+  div.querySelector('[data-act=reset]').onclick = () => post(`/sim/api/labels/${encodeURIComponent(l.barcode)}/reset`);
+  div.querySelector('[data-act=del]').onclick = () => confirm('刪除標籤 ' + l.barcode + '？') && fetch(`/sim/api/labels/${encodeURIComponent(l.barcode)}`, { method: 'DELETE' });
+  return div;
+}
+
+function renderLabels() {
+  const box = $('#labels');
+  box.innerHTML = '';
+  if (!state.labels.length) box.innerHTML = '<div class="empty">尚無標籤。新增一個 ID，或直接用 API 寫入。</div>';
+  state.labels.forEach((l) => box.appendChild(card(l)));
+}
+function logRow(e) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td>${new Date(e.ts).toLocaleTimeString()}</td><td class="code">${esc(e.ip)}</td><td>${esc(e.team || '')}</td><td class="code">${esc(e.method)} ${esc(e.path)}</td><td class="s${String(e.status)[0]}">${e.status || '—'}</td><td class="code">${esc(JSON.stringify(e.resp)).slice(0, 160)}</td>`;
+  return tr;
+}
+function renderLog() { const tb = $('#log'); tb.innerHTML = ''; state.log.slice(0, 50).forEach((e) => tb.appendChild(logRow(e))); }
+
+async function post(url, body) {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+  if (!r.ok) alert((await r.json()).error || r.statusText);
+}
+$('#add').onclick = async () => { const id = $('#newId').value.trim(); if (id) { await post('/sim/api/labels', { barcode: id }); $('#newId').value = ''; } };
+
+async function load() {
+  state = await (await fetch('/sim/api/state')).json();
+  $('#cfg').textContent = `刷新 ${state.refreshMs} ms · PUT ${state.merge ? '合併' : '整筆取代'}${state.strict ? ' · 只接受預設 ID' : ''}`;
+  renderLabels(); renderLog();
+}
+const es = new EventSource('/sim/events');
+es.addEventListener('label', (e) => {
+  const l = JSON.parse(e.data);
+  const i = state.labels.findIndex((x) => x.barcode === l.barcode);
+  if (i >= 0) state.labels[i] = l; else state.labels.push(l);
+  const old = document.getElementById('c-' + CSS.escape(l.barcode));
+  if (old) old.replaceWith(card(l)); else renderLabels();
+});
+es.addEventListener('log', (e) => { state.log.unshift(JSON.parse(e.data)); $('#log').prepend(logRow(state.log[0])); while ($('#log').children.length > 50) $('#log').lastChild.remove(); });
+es.addEventListener('reload', load);
+load();
+</script>
+</body>
+</html>

@@ -90,6 +90,30 @@ node scripts/import-ccs.js ~/Downloads/worldskills --date 2026-09-22
 
 ---
 
+## eInk API 模擬器（E-Label 寫入，Module C / D）
+
+賽場的 E-Label 是透過中央工廠 `192.168.10.2:3001` 的 eInk API 寫入；離開賽場（研討會、平時訓練）就沒有這台伺服器。
+`eink-sim/` 用**同一組端點**模擬它，並把標籤畫在網頁上，選手原本的 Node-RED flow 只要改 host 就能跑。
+
+```bash
+npm run eink-sim                    # http://localhost:3001/  虛擬標籤看板；API 在 /api/ws26/
+EINK_TEAMS="team_25:密碼" EINK_LABELS="8173E4476" EINK_REFRESH_MS=4000 npm run eink-sim
+```
+
+| 端點 | 行為 |
+|---|---|
+| `POST /api/ws26/login` | `{teamId, password}` → `{token}`（未設 `EINK_TEAMS` 時任意帳密皆可） |
+| `PUT /api/ws26/labels/{barcode}` | title / subtitle / message / messageTextColor / messageBackgroundColor / nfcUrl / qrCode / imageDataUrl；回 `{"success":true,"message":"Data successfully sent to the API"}`，畫面延遲 `EINK_REFRESH_MS` 後才更新 |
+| `POST /api/ws26/labels/{barcode}/overlay` | 遮罩圖（Module D 模擬顯示故障）；與實機相同，須先成功寫入過一次 |
+| `DELETE /api/ws26/labels/{barcode}/overlay` | 移除遮罩 |
+
+- 看板 `/`：所有標籤即時顯示、API 呼叫紀錄、每張標籤可注入故障（回 500 / 不回應 / 不刷新）訓練錯誤處理。
+- `/label/{barcode}`：單一標籤全螢幕，放在手機或平板上擺在托盤右端，ML 相機可拍到 **Code 128 ID 條碼與 QR code**（已用 ZXing 驗證可解碼）。
+- 預設 PUT 為**整筆取代**（沒傳的欄位清空）；實機若為合併行為，設 `EINK_MERGE=1`。
+- 若研討會要把 Node-RED 完全不改，可把模擬器主機設成 `192.168.10.2`、埠 3001。
+
+---
+
 ## 專案結構
 
 ```
@@ -99,7 +123,8 @@ public/index.html      選手端（純 JS，無需 CDN，可離線在賽場內�
 public/admin.html      裁判後台
 scripts/seed-demo.js   示範資料
 scripts/import-ccs.js  匯入另存的 WS CCS 頁面
-tests/api.test.js      API 流程測試（npm test）
+eink-sim/              eInk API 模擬器 + 虛擬 E-Label
+tests/                 API 流程測試（npm test）
 ```
 
 環境變數：`PORT`（預設 8080）、`ADMIN_PASSWORD`（預設 admin，後台可改）、`DATA_DIR`、`UPLOAD_DIR`。
